@@ -15,7 +15,7 @@
 
 **English** · [简体中文](README.zh-CN.md)
 
-[Install](#install) · [Usage](#usage) · [Settings](#settings-window) · [Response times](#response-times) · [How it works](#how-it-works) · [Development](#development)
+[Screenshots](#screenshots) · [Install](#install) · [Usage](#usage) · [Settings](#settings-window) · [Response times](#response-times) · [How it works](#how-it-works) · [Development](#development)
 
 </div>
 
@@ -25,6 +25,20 @@ Select a passage in a web page, a PDF or any other app. **翻译 (Translate)** a
 - It calls the command-line tools directly and uses their sign-in and usage limits. No extra service, no API key.
 - Your text goes to the selected model only when you click Translate or send a question. Selecting text alone sends nothing.
 - The interface is currently in Chinese. Translations can go into Simplified or Traditional Chinese, English, Japanese, Korean, French, German or Spanish.
+
+## Screenshots
+
+**Select text.** Drag over a passage or double-click it. When you release the mouse, **翻译 (Translate)** and **提问 (Ask)** appear below the pointer.
+
+<p align="center"><img src="assets/screenshots/selection.png" width="600" alt="A selected paragraph on a web page with the Translate and Ask buttons below it"></p>
+
+**Translate.** The translation appears in a panel next to the text. You can keep asking follow-up questions below it.
+
+<p align="center"><img src="assets/screenshots/translate.png" width="640" alt="The Agent Assistant panel showing the Chinese translation of the selected paragraph"></p>
+
+**Ask about a PDF.** This works in Chrome's built-in PDF viewer too. Headings, lists, bold text and formulas in the answer are formatted for reading.
+
+<p align="center"><img src="assets/screenshots/pdf-ask.png" width="760" alt="A sentence selected in a PDF in Chrome, with a question about it and the answer in the panel"></p>
 
 ## Install
 
@@ -37,7 +51,7 @@ Select a passage in a web page, a PDF or any other app. **翻译 (Translate)** a
 
 ## Usage
 
-- **Select text**: drag to select or double-click, then release the mouse. Click **翻译 (Translate)** for an instant translation, or **提问 (Ask)** to type a question first. You can keep asking in the panel. Each request includes the original text and the latest eight questions and answers.
+- **Select text**: drag to select or double-click, then release the mouse. Click **翻译 (Translate)** for an instant translation, or **提问 (Ask)** to type a question first. You can keep asking in the panel. Each request includes the original text and the latest eight questions and answers. **复制回答 (Copy answer)** copies the answer as the model wrote it, Markdown included.
 - **When the selection cannot be read**: Chrome's built-in PDF viewer, freshly opened web pages and apps such as Feishu (Lark) do not share the selected text with macOS. The assistant then sends ⌘C to that app once to copy it, and restores your clipboard right afterwards. You can turn this off in settings. It never does this in Finder or in password fields, or when you drag a window or click a button or scroll bar.
 - **Services menu**: in apps that support Services, select text and right-click → **Services** → **用 Agent Assistant 翻译 / 提问** (Translate / Ask with Agent Assistant).
 - **Clipboard**: press ⌘C first, then choose **翻译剪贴板文字** (Translate clipboard text) or **用剪贴板文字提问…** (Ask about clipboard text) from the menu bar. These two do not need the Accessibility permission.
@@ -51,6 +65,12 @@ Select a passage in a web page, a PDF or any other app. **翻译 (Translate)** a
 | 响应时间 (Response time) | A model × reasoning-effort grid. Each cell is the median of 3 requests, in seconds. Darker green is faster, 额度 (quota) means the usage limit had run out, and a blue border marks the combination in use. **Click a cell to switch to that combination.** The button at the top right tests the current combination |
 
 The menu-bar item **响应时间… (Response times…)** opens the third tab directly.
+
+| 划词 (Selection) | 模型 (Model) |
+| --- | --- |
+| <img src="assets/screenshots/settings-selection.png" alt="Selection tab: show the buttons, Accessibility allowed, Cmd+C fallback, translation language, clipboard actions"> | <img src="assets/screenshots/settings-model.png" alt="Model tab: Claude Code, Sonnet 5.5, default effort, measured response time 3.61 s"> |
+
+<p align="center"><img src="assets/screenshots/settings-latency.png" width="720" alt="Response time tab: a model by reasoning-effort grid of median times in seconds"></p>
 
 ## Response times
 
@@ -80,7 +100,7 @@ Each request starts the CLI once in a temporary directory, passes the text and c
 Sources/
   App.swift             Menu bar, selection buttons, chat panel, settings window
   Selection.swift       Global mouse monitor, reading the selection via Accessibility, ⌘C fallback
-  AssistantView.swift   Chat panel and conversation session
+  AssistantView.swift   Chat panel, conversation session, Markdown answers
   Backend.swift         Calling Claude Code / Codex, error classification, model catalog
   Subprocess.swift      Child processes (own process group), login-shell environment, newest-CLI lookup
   Latency.swift         Response-time tests and records
