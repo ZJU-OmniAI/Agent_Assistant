@@ -65,7 +65,7 @@ struct ResponseTimeView: View {
                 }
                 Button("测试当前组合（3 次）", action: start).disabled(task != nil)
             }
-            Text("每格是把同一句英文译成简体中文、连续 3 次的中位耗时（秒），从发出请求算到收到完整译文，包含 CLI 启动时间。点格子即可改用该模型和推理强度。")
+            Text("每格是把同一句英文译成简体中文、连续 3 次的中位耗时（秒）：像实际使用一样，划词后约 1 秒点「翻译」，从点击算到收到完整译文。2026-11-27 之前测的格子是旧方式（每次重新启动 CLI），偏慢。点格子即可改用该模型和推理强度。")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if !status.isEmpty { Text(status).font(.caption).textSelection(.enabled) }
 

@@ -198,6 +198,13 @@ struct AssistantView: View {
         }
         .frame(minWidth: 340, minHeight: 275)
         .onAppear { composing = true }
+        // Typing a follow-up is the moment to get the CLI ready. Each edit keeps it for another
+        // 30 s; it ends by itself if the question is never sent.
+        .onChange(of: session.draft) { draft in
+            guard !draft.trimmed.isEmpty else { return }
+            let backend = Preferences.backend()
+            Task { await backend.prepare() }
+        }
     }
 }
 

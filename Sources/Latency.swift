@@ -20,6 +20,8 @@ struct LatencyRun: Codable, Identifiable {
     static let source = "The library opens at nine."
     static let question = "翻译成简体中文。"
     static let historyKey = "translationLatency.v1"
+    /// Like a user who selects text and clicks Translate a second later; the CLI is made ready meanwhile.
+    nonisolated(unsafe) static var reactionDelay: TimeInterval = 1
 
     var successfulTimes: [Double] {
         samples.filter { $0.error == nil }.map(\.seconds).sorted()
@@ -38,6 +40,8 @@ struct LatencyRun: Codable, Identifiable {
                        serviceTier: backend.serviceTier.isEmpty ? nil : backend.serviceTier)
         for _ in 0..<repetitions {
             try Task.checkCancellation()
+            await backend.prepare()
+            try await Task.sleep(nanoseconds: UInt64(reactionDelay * 1e9))
             let start = ContinuousClock.now
             var failure: String?
             do { _ = try await backend.generate(messages) }

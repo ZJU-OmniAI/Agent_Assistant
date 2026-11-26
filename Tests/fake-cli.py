@@ -49,7 +49,26 @@ if name == "claude":
         print(json.dumps({"loggedIn": not os.path.exists(os.path.join(fixture, "logged-out"))}))
         sys.exit(0)
     if "--input-format" in args:
-        sys.stdin.readline()
+        first = sys.stdin.readline()
+        if not first:
+            sys.exit(0)  # input closed without a question: an unused prepared process
+        message = json.loads(first)
+        if message.get("type") == "user":
+            prompt = message["message"]["content"]
+            log({"args": args, "stdin": prompt, "pid": os.getpid()})
+            print(json.dumps({"type": "system", "subtype": "init"}), flush=True)
+            text, error = answer(prompt)
+            if error == "quota":
+                result = {"type": "result", "subtype": "success", "is_error": True,
+                          "result": "You've hit your weekly usage limit · resets 5pm (Asia/Shanghai)"}
+            elif error:
+                result = {"type": "result", "subtype": "error_during_execution", "is_error": True, "result": error}
+            else:
+                result = {"type": "result", "subtype": "success", "is_error": False, "result": text}
+            print(json.dumps(result, ensure_ascii=False), flush=True)
+            sys.stdin.read()  # like the CLI: exit once input is closed
+            time.sleep(0.2)
+            sys.exit(1 if error else 0)
         print(json.dumps({"type": "system", "subtype": "init"}), flush=True)
         print(json.dumps({"type": "control_response", "response": {"subtype": "success", "request_id": "models", "response": {
             "models": [{"value": "default", "displayName": "Default"},

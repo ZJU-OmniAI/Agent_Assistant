@@ -210,12 +210,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         prepareBackend()
     }
 
-    /// Codex answers about 3 s sooner when its conversation is set up while the user is still
-    /// choosing between Translate and Ask.
+    /// Answers arrive seconds sooner when the CLI is made ready while the user is still choosing
+    /// between Translate and Ask. Claude Code is started only now and ends unused after 30 s.
     private func prepareBackend() {
         let backend = Preferences.backend()
-        guard backend.provider == "codex" else { return }
-        Task { await CodexServer.shared.prepare(backend) }
+        Task { await backend.prepare() }
     }
 
     @objc private func translate() { useStrip(translate: true) }
@@ -305,6 +304,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             session?.stop()
             session = nil
             chat = nil
+            // No follow-up is coming: end a Claude Code process started for one.
+            Task { await ClaudeWarmup.shared.discard() }
         }
     }
 

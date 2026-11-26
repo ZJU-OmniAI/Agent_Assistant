@@ -21,7 +21,7 @@
 
 Select a passage in a web page, a PDF or any other app. **翻译 (Translate)** and **提问 (Ask)** buttons appear next to the pointer. Click one and the **Claude Code** or **Codex** CLI signed in on this Mac answers. You can keep asking follow-up questions in the same panel.
 
-- Native AppKit + SwiftUI. The app is about 3 MB and includes builds for both Apple silicon and Intel. While idle it only listens for mouse events, so it uses almost no resources. With Codex, one Codex background process (about 60–100 MB of memory) stays running while you use it and exits after 15 idle minutes.
+- Native AppKit + SwiftUI. The app is about 3 MB and includes builds for both Apple silicon and Intel. While idle it only listens for mouse events, so it uses almost no resources. Helper processes run only around actual use: with Codex, one background process (about 60–100 MB) that exits after 15 idle minutes; with Claude Code, one process (about 230 MB) started when you select text or type a question, which ends after answering or after 30 unused seconds. All of them end within a second when Agent Assistant quits, even if it crashes.
 - It calls the command-line tools directly and uses their sign-in and usage limits. No extra service, no API key.
 - Your text goes to the selected model only when you click Translate or send a question. Selecting text alone sends nothing.
 - The interface is currently in Chinese. Translations can go into Simplified or Traditional Chinese, English, Japanese, Korean, French, German or Spanish.
@@ -84,19 +84,25 @@ Measured on 2026-11-26. Each combination translated the fixed sentence `The libr
 
 **Codex background process.** Of the ~5.5 s a one-sentence translation took with `codex exec`, the model itself needed under 2 s. The rest was setup every new process repeats: fetching the model list (~0.8 s), syncing plugins (~0.7 s), opening and warming the connection (~0.9 s) and shutting down (~1 s). Since 2026-11-27 the app keeps one `codex app-server` running and sets up the next conversation while you are still selecting text. Measured with the app's own code: GPT-6.2-Sol went from 5.5 s to 2.1 s, and GPT-6.1 Terra with medium effort and Fast mode from 5.3 s to 1.6 s. The very first request, which also starts the process, takes about 4–5 s.
 
+**Claude Code, started ahead.** A one-sentence translation with Sonnet 5.5 took about 2.75 s: ~0.5 s for the CLI to start, ~1.3 s for the model and ~0.8 s for the CLI to exit, which the app used to wait for. Since 2026-11-27 the app reads the answer as soon as it arrives (1.85 s), and starts the CLI when the 翻译 / 提问 buttons appear, so it is ready by the time you click (1.13 s). A Claude Code process uses about 230 MB, so none is kept running: see How it works.
+
+The Response time page measures the same way since 2026-11-27: the CLI is made ready, and the clock starts at a simulated click one second later. Cells measured earlier used the old method and are slower.
+
 The raw data is in [`benchmarks/2026-11-26/results.json`](benchmarks/2026-11-26/results.json) and the spreadsheet in [`benchmarks/2026-11-26/响应时间-全部组合.xlsx`](benchmarks/2026-11-26/响应时间-全部组合.xlsx). These runs went through the local bridge of [Paper_Mind](https://github.com/ZJU-OmniAI/Paper_Mind), and the app's Response time tab reads them too. The bridge also starts the CLI once per request, so the times compare directly.
 
 ## How it works
 
 Each request sends the original text and the recent conversation, and nothing is saved by the CLI. Clicking **停止 (Stop)** ends the request.
 
-- **Claude Code**: `claude -p --output-format json`, one process per request in a temporary directory that is deleted afterwards, with tools, MCP, slash commands and hooks turned off, and no session saved.
+- **Claude Code**: `claude -p --input-format stream-json --output-format stream-json`, in a temporary directory that is deleted afterwards, with tools, MCP, slash commands and hooks turned off, and no session saved. Each process answers one request. One is started when the 翻译 / 提问 buttons appear or when you type in the question box, and is used by the next request with the same model and effort. An unused one ends after 30 seconds (each edit to the question restarts the count), when you close the chat panel, or when you change the model or effort. Nothing is started again after an answer until you select text or type.
 - **Codex**: one resident `codex app-server`, started the first time you select text and stopped after 15 idle minutes or when the app quits. It runs with plugins, MCP servers (read from your config and switched off by name), browser and computer use, command execution, web search, multi-agent and shell snapshots turned off. Each request gets its own unsaved conversation in a read-only sandbox, prepared when the 翻译 / 提问 buttons appear and unloaded after the answer. With Fast mode on, the request asks for the `priority` tier. Your Codex config still supplies the default model and reasoning effort (used when the app is set to CLI default), but its `notify` program does not run. If the background process cannot start or the CLI is too old, the app falls back to `codex exec --json --ephemeral` with the same restrictions and the user config ignored.
 - **Finding the CLI**: it searches PATH, `~/.local/bin`, Homebrew, nvm and the Codex CLI bundled with ChatGPT.app. If it finds several copies, it uses the one with the newest `--version` that actually runs, so an old npm install does not hide newer models.
 - **Environment**: an app opened from Finder gets very few environment variables. The assistant reads `PATH` and the proxy settings (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY` and their lowercase forms) from your login shell, and nothing else. A proxy that works in Terminal therefore works here too.
 - **Model list**: read from the CLIs themselves (Claude's `initialize`, Codex's `app-server model/list`). This starts no conversation and uses no quota.
 
-`AGENT_ASSISTANT_CLAUDE_BIN` and `AGENT_ASSISTANT_CODEX_BIN` set the CLI paths explicitly. `AGENT_ASSISTANT_CODEX_SERVER=0` makes Codex always use `codex exec`.
+`AGENT_ASSISTANT_CLAUDE_BIN` and `AGENT_ASSISTANT_CODEX_BIN` set the CLI paths explicitly. `AGENT_ASSISTANT_CODEX_SERVER=0` makes Codex always use `codex exec`, and `AGENT_ASSISTANT_CLAUDE_WARMUP=0` starts Claude Code only when a request is sent.
+
+**When Agent Assistant quits.** Both CLIs run as child processes of the app and read their input from it. When the app quits, normally or by crashing, that input closes and they exit by themselves within about a second (measured: 0.9 s for Claude Code, at once for Codex), so nothing is left running.
 
 ## Development
 
@@ -107,6 +113,7 @@ Sources/
   AssistantView.swift   Chat panel, conversation session, Markdown answers
   Backend.swift         Calling Claude Code / Codex, error classification, model catalog
   CodexServer.swift     Resident codex app-server: prepared conversations, falls back to codex exec
+  ClaudeWarmup.swift    Claude Code started on intent, one request per process, ends when unused
   Subprocess.swift      Child processes (own process group), login-shell environment, newest-CLI lookup
   Latency.swift         Response-time tests and records
   ResponseTimeView.swift / SettingsView.swift   Settings window

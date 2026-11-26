@@ -27,6 +27,7 @@ func lastCall(_ name: String, _ fixture: URL) -> [String: Any] {
 enum BackendChecks {
     @MainActor static func main() async throws {
         signal(SIGPIPE, SIG_IGN)
+        LatencyRun.reactionDelay = 0
         let fixture = URL(fileURLWithPath: ProcessInfo.processInfo.environment["FIXTURE_DIR"]!)
 
         // Versions: a release outranks its pre-releases; numbers compare numerically.
@@ -80,7 +81,35 @@ enum BackendChecks {
         let claudeCall = lastCall("claude", fixture)
         let claudeArgs = claudeCall["args"] as? [String] ?? []
         check(claudeArgs.contains("--model") && claudeArgs.contains("sonnet") && claudeArgs.contains("--effort")
-              && claudeArgs.contains("high") && claudeArgs.contains("--tools"), "claude args \(claudeArgs)")
+              && claudeArgs.contains("high") && claudeArgs.contains("--tools") && claudeArgs.contains("--input-format"),
+              "claude args \(claudeArgs)")
+        // A Claude Code process started ahead answers the next request with the same settings.
+        await ClaudeWarmup.shared.prepare(claude)
+        let warmPID = await ClaudeWarmup.shared.spareProcessID ?? 0
+        check(warmPID > 0, "claude process prepared")
+        check(try await claude.generate(messages) == "动作上的分布。", "prepared claude answers")
+        check(lastCall("claude", fixture)["pid"] as? Int == Int(warmPID), "prepared process used")
+        try await waitUntil(5) { kill(warmPID, 0) != 0 }
+        // Changed settings: the prepared process ends and a fresh one answers.
+        await ClaudeWarmup.shared.prepare(claude)
+        let staleWarm = await ClaudeWarmup.shared.spareProcessID ?? 0
+        _ = try await LocalCLI(provider: "claude", model: "haiku").generate(messages)
+        check(lastCall("claude", fixture)["pid"] as? Int != Int(staleWarm), "settings changed: fresh process")
+        try await waitUntil(5) { kill(staleWarm, 0) != 0 }
+        // An unused process ends by itself, and so does one discarded when the panel closes.
+        ClaudeWarmup.lifetime = 0.5
+        await ClaudeWarmup.shared.prepare(claude)
+        let idleWarm = await ClaudeWarmup.shared.spareProcessID ?? 0
+        try await waitUntil(5) { kill(idleWarm, 0) != 0 }
+        check(await ClaudeWarmup.shared.spareProcessID == nil, "unused process expires")
+        ClaudeWarmup.lifetime = 30
+        await ClaudeWarmup.shared.prepare(claude)
+        let closedWarm = await ClaudeWarmup.shared.spareProcessID ?? 0
+        await ClaudeWarmup.shared.discard()
+        try await waitUntil(5) { kill(closedWarm, 0) != 0 }
+        // Nothing is started for Claude Code while Codex is selected, and vice versa.
+        await ClaudeWarmup.shared.prepare(LocalCLI(provider: "codex", model: ""))
+        check(await ClaudeWarmup.shared.spareProcessID == nil, "no Claude process for Codex")
         check((claudeCall["stdin"] as? String ?? "").contains("选中的多行原文"), "source text reaches the CLI")
         // Codex goes through the resident app-server.
         let codexCLI = LocalCLI(provider: "codex", model: "gpt-fixture", effort: "low")
