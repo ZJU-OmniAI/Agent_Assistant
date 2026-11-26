@@ -61,8 +61,8 @@ Select a passage in a web page, a PDF or any other app. **翻译 (Translate)** a
 | Tab | What it contains |
 | --- | --- |
 | 划词 (Selection) | Whether to show the buttons, permission status, the ⌘C fallback switch, translation language, and the clipboard actions |
-| 模型 (Model) | Claude Code or Codex, the model, and the reasoning effort. The measured response time for that combination appears right below. A button checks the sign-in status |
-| 响应时间 (Response time) | A model × reasoning-effort grid. Each cell is the median of 3 requests, in seconds. Darker green is faster, 额度 (quota) means the usage limit had run out, and a blue border marks the combination in use. **Click a cell to switch to that combination.** The button at the top right tests the current combination |
+| 模型 (Model) | Claude Code or Codex, the model, and the reasoning effort. Codex models that offer it also get a **快速模式 (Fast)** switch. The measured response time for that combination appears right below. A button checks the sign-in status |
+| 响应时间 (Response time) | A model × reasoning-effort grid. Each cell is the median of 3 requests, in seconds. Darker green is faster, 额度 (quota) means the usage limit had run out, and a blue border marks the combination in use. **Click a cell to switch to that combination.** The button at the top right tests the current combination. On the Codex page, 标准 / 快速 (Standard / Fast) shows the two speeds separately |
 
 The menu-bar item **响应时间… (Response times…)** opens the third tab directly.
 
@@ -80,6 +80,8 @@ Measured on 2026-11-26. Each combination translated the fixed sentence `The libr
 - Most other Claude models took 4–6 s. Most Codex models took 6–9 s.
 - Reasoning effort made little difference for translating a short sentence.
 
+**Codex Fast mode.** Codex offers a faster serving tier for its models. Codex describes it per model, for example "1.5x speed" or "2x speed, increased usage", so some models use more quota with it. It speeds up only the model's output, not the few seconds the CLI takes to start, so longer answers gain the most. Measured on 2026-11-27 with GPT-6.2-Sol, a one-sentence translation went from about 5.9 s to 5.4 s, and a 500-character explanation from about 16.5 s to 12.4 s.
+
 The raw data is in [`benchmarks/2026-11-26/results.json`](benchmarks/2026-11-26/results.json) and the spreadsheet in [`benchmarks/2026-11-26/响应时间-全部组合.xlsx`](benchmarks/2026-11-26/响应时间-全部组合.xlsx). These runs went through the local bridge of [Paper_Mind](https://github.com/ZJU-OmniAI/Paper_Mind), and the app's Response time tab reads them too. The bridge also starts the CLI once per request, so the times compare directly.
 
 ## How it works
@@ -87,7 +89,7 @@ The raw data is in [`benchmarks/2026-11-26/results.json`](benchmarks/2026-11-26/
 Each request starts the CLI once in a temporary directory, passes the text and conversation on standard input, and deletes the directory afterwards. Clicking **停止 (Stop)** ends the whole process group.
 
 - **Claude Code**: `claude -p --output-format json`, with tools, MCP, slash commands and hooks turned off, and no session saved.
-- **Codex**: `codex exec --json --ephemeral`, with a read-only sandbox, the user config ignored, and command execution, web search and multi-agent turned off.
+- **Codex**: `codex exec --json --ephemeral`, with a read-only sandbox, the user config ignored, and command execution, web search and multi-agent turned off. With Fast mode on, it adds `-c service_tier="priority"`.
 - **Finding the CLI**: it searches PATH, `~/.local/bin`, Homebrew, nvm and the Codex CLI bundled with ChatGPT.app. If it finds several copies, it uses the one with the newest `--version` that actually runs, so an old npm install does not hide newer models.
 - **Environment**: an app opened from Finder gets very few environment variables. The assistant reads `PATH` and the proxy settings (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY` and their lowercase forms) from your login shell, and nothing else. A proxy that works in Terminal therefore works here too.
 - **Model list**: read from the CLIs themselves (Claude's `initialize`, Codex's `app-server model/list`). This starts no conversation and uses no quota.

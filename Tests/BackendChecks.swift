@@ -48,6 +48,14 @@ enum BackendChecks {
         check(CatalogModel.effortLevels(provider: "codex", model: codexModels[0]) == ["default", "low", "high"], "codex efforts")
         check(CatalogModel.effortLevels(provider: "codex", model: codexModels[1]).count == 9, "fallback effort list")
         check(CatalogModel.accepts("custom/model:2.0") && !CatalogModel.accepts("not a model"), "model id rules")
+        // Codex speed tiers: the valid one is kept and described in Chinese; the CLI default model is found.
+        check(codexModels[0].serviceTiers == [ServiceTier(id: "priority", name: "Fast", description: "1.5x speed, increased usage")],
+              "codex tiers \(codexModels[0].serviceTiers)")
+        check(codexModels[0].serviceTiers[0].summary == "约 1.5 倍速度，额度消耗更多", codexModels[0].serviceTiers[0].summary)
+        check(ServiceTier(id: "priority", name: "Fast", description: "2x speed").summary == "约 2 倍速度", "tier summary")
+        check(codexModels[1].serviceTiers.isEmpty && claudeModels.allSatisfy { $0.serviceTiers.isEmpty }, "no tiers elsewhere")
+        check(CatalogModel.serving("", in: codexModels)?.id == "gpt-fixture" && CatalogModel.serving("gpt-two", in: codexModels)?.id == "gpt-two",
+              "default model lookup")
 
         // Connection status.
         let ready = try await LocalCLI(provider: "codex", model: "").checkConnection()
@@ -74,6 +82,14 @@ enum BackendChecks {
         let codexArgs = lastCall("codex", fixture)["args"] as? [String] ?? []
         check(codexArgs.contains("gpt-fixture") && codexArgs.contains("model_reasoning_effort=\"low\"")
               && codexArgs.contains("read-only"), "codex args \(codexArgs)")
+        check(!codexArgs.joined(separator: " ").contains("service_tier"), "standard tier omits the flag")
+        _ = try await LocalCLI(provider: "codex", model: "gpt-fixture", effort: "low", serviceTier: "priority").generate(messages)
+        let fastArgs = lastCall("codex", fixture)["args"] as? [String] ?? []
+        check(fastArgs.contains("service_tier=\"priority\""), "fast tier flag \(fastArgs)")
+        do {
+            _ = try await LocalCLI(provider: "claude", model: "", serviceTier: "priority").generate(messages)
+            check(false, "claude has no service tier")
+        } catch { check(error.localizedDescription.contains("不支持速度档位"), error.localizedDescription) }
         let plain = LocalCLI(provider: "claude", model: "")
         _ = try await plain.generate(messages)
         let plainArgs = lastCall("claude", fixture)["args"] as? [String] ?? []
@@ -112,7 +128,12 @@ enum BackendChecks {
         check(configured.model == "legacy-model" && configured.effort == "medium", "saved model and effort")
         prefs.set("codex", forKey: "provider")
         let switched = Preferences.backend(prefs)
-        check(switched.model.isEmpty && switched.effort == "default", "switching backend keeps choices apart")
+        check(switched.model.isEmpty && switched.effort == "default" && switched.serviceTier.isEmpty, "switching backend keeps choices apart")
+        prefs.set("priority", forKey: Preferences.serviceTierKey(provider: "codex", model: ""))
+        check(Preferences.backend(prefs).serviceTier == "priority", "saved speed tier")
+        prefs.set("priority", forKey: Preferences.serviceTierKey(provider: "claude", model: "legacy-model"))
+        prefs.set("claude", forKey: "provider")
+        check(Preferences.backend(prefs).serviceTier.isEmpty, "Claude Code ignores speed tiers")
 
         // Session: answer, failure and retry, stop, and switching models mid-conversation.
         UserDefaults.standard.setVolatileDomain(["provider": "claude", "model.claude": ""], forName: UserDefaults.argumentDomain)
@@ -157,6 +178,18 @@ enum BackendChecks {
         check(run.samples.count == 3 && run.successfulTimes.count == 3 && updates == 3 && run.median! > 0, "latency run")
         let latest = LatencyRun.latest(in: latencyPrefs)
         check(latest[LatencyRun.configurationKey(provider: "claude", model: "sonnet", effort: "low")]?.id == run.id, "latest by configuration")
+        // Fast-tier runs are recorded apart from standard ones, and old records without a tier still load.
+        let fastRun = try await LatencyRun.measure(backend: LocalCLI(provider: "codex", model: "gpt-fixture", effort: "low", serviceTier: "priority"),
+                                                   label: "GPT Fixture") { LatencyRun.save($0, in: latencyPrefs) }
+        let standardRun = try await LatencyRun.measure(backend: LocalCLI(provider: "codex", model: "gpt-fixture", effort: "low"),
+                                                       label: "GPT Fixture") { LatencyRun.save($0, in: latencyPrefs) }
+        let both = LatencyRun.latest(in: latencyPrefs)
+        check(both[LatencyRun.configurationKey(provider: "codex", model: "gpt-fixture", effort: "low", serviceTier: "priority")]?.id == fastRun.id
+              && both[LatencyRun.configurationKey(provider: "codex", model: "gpt-fixture", effort: "low")]?.id == standardRun.id
+              && fastRun.serviceTier == "priority" && standardRun.serviceTier == nil, "tiers recorded apart")
+        let legacy = #"[{"id":"\#(UUID().uuidString)","started":0,"provider":"codex","model":"m","label":"M","effort":"low","samples":[{"seconds":1}]}]"#
+        latencyPrefs.set(Data(legacy.utf8), forKey: LatencyRun.historyKey)
+        check(LatencyRun.history(in: latencyPrefs).first?.serviceTier == nil && LatencyRun.history(in: latencyPrefs).count == 1, "old records load")
         // Answers: Markdown blocks are laid out instead of showing raw symbols.
         let blocks = MarkdownBlock.parse("## 两个概念\n\n**Bootstrapping**：自举\n- 短时域\n  2) 子项\n> 注：一\n> 二\n---\n```\nV(s) ← r\n```\n| a | b |\n|---|---|\n#话题 不是标题")
         check(blocks == [.heading(level: 2, text: "两个概念"), .paragraph("**Bootstrapping**：自举"),

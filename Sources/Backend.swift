@@ -5,13 +5,41 @@ struct Message: Codable, Equatable {
     let content: String
 }
 
+/// A faster serving tier a Codex model offers, such as "priority" ("Fast", "1.5x speed").
+struct ServiceTier: Equatable {
+    let id: String
+    let name: String
+    let description: String
+
+    /// The catalog's English description in plain Chinese, e.g. "约 2 倍速度，额度消耗更多".
+    var summary: String {
+        var parts: [String] = []
+        if let range = description.range(of: #"\d+(\.\d+)?(?=\s*x\s+speed)"#, options: [.regularExpression, .caseInsensitive]) {
+            parts.append("约 \(description[range]) 倍速度")
+        }
+        if description.range(of: "increased usage", options: .caseInsensitive) != nil { parts.append("额度消耗更多") }
+        return parts.isEmpty ? description : parts.joined(separator: "，")
+    }
+
+    static func accepts(_ id: String) -> Bool {
+        id.range(of: #"^[a-z0-9][a-z0-9_-]{0,31}\z"#, options: .regularExpression) != nil
+    }
+}
+
 struct CatalogModel: Identifiable, Equatable {
     let id: String
     let label: String
     let efforts: [String]?
+    var serviceTiers: [ServiceTier] = []
+    var isDefault = false
 
     static func effortLevels(provider: String, model: CatalogModel? = nil) -> [String] {
         ["default"] + (model?.efforts ?? LocalCLI.efforts[provider] ?? [])
+    }
+
+    /// The catalog entry that serves requests for a saved model ID ("" is the CLI's default model).
+    static func serving(_ id: String, in models: [CatalogModel]) -> CatalogModel? {
+        id.isEmpty ? models.first(where: \.isDefault) : models.first { $0.id == id }
     }
 
     static func accepts(_ id: String) -> Bool {
@@ -56,6 +84,8 @@ struct LocalCLI {
     let provider: String
     let model: String
     var effort = "default"
+    /// A Codex service tier such as "priority" (Fast); empty for the standard tier.
+    var serviceTier = ""
 
     static let providers = ["claude", "codex"]
     static let efforts = ["claude": ["low", "medium", "high", "xhigh", "max"],
@@ -71,6 +101,9 @@ struct LocalCLI {
         guard modelID == "default" || CatalogModel.accepts(modelID) else { throw AssistantError("模型 ID 无效：\(modelID)。") }
         guard effort == "default" || Self.efforts[provider]!.contains(effort) else {
             throw AssistantError("\(displayName) 不支持推理强度 \(effort)。")
+        }
+        guard serviceTier.isEmpty || (provider == "codex" && ServiceTier.accepts(serviceTier)) else {
+            throw AssistantError("\(displayName) 不支持速度档位 \(serviceTier)。")
         }
     }
 
@@ -88,6 +121,7 @@ struct LocalCLI {
                 "--disable", "skill_search", "-o", output]
             + (modelID != "default" ? ["-m", modelID] : [])
             + (effort != "default" ? ["-c", "model_reasoning_effort=\"\(effort)\""] : [])
+            + (serviceTier.isEmpty ? [] : ["-c", "service_tier=\"\(serviceTier)\""])
             + ["-"]
     }
 
@@ -400,7 +434,13 @@ struct LocalCLI {
                 }
                 return unique
             }
-            models.append(CatalogModel(id: id, label: String((item["displayName"] as? String ?? id).prefix(200)), efforts: efforts))
+            let tiers = (item["serviceTiers"] as? [[String: Any]] ?? []).compactMap { tier -> ServiceTier? in
+                guard provider == "codex", let tierID = tier["id"] as? String, ServiceTier.accepts(tierID) else { return nil }
+                return ServiceTier(id: tierID, name: String((tier["name"] as? String ?? tierID).prefix(40)),
+                                   description: String((tier["description"] as? String ?? "").prefix(200)))
+            }
+            models.append(CatalogModel(id: id, label: String((item["displayName"] as? String ?? id).prefix(200)), efforts: efforts,
+                                       serviceTiers: tiers, isDefault: item["isDefault"] as? Bool == true))
         }
         return models
     }

@@ -196,7 +196,8 @@ private struct ModelPicker: View {
             }
         }
         .onChange(of: model) { _ in editing = false }
-        EffortPicker(provider: provider, model: model, catalogModel: models.first { $0.id == model })
+        EffortPicker(provider: provider, model: model, catalogModel: models.first { $0.id == model },
+                     tiers: models.isEmpty ? nil : CatalogModel.serving(model, in: models)?.serviceTiers ?? [])
             .id(model)
         if editing {
             HStack {
@@ -228,15 +229,20 @@ private struct EffortPicker: View {
     @AppStorage private var effort: String
     @AppStorage(LatencyRun.historyKey) private var history = Data()
     @AppStorage("settingsTab") private var tab = "model"
+    @AppStorage private var tier: String
     let provider: String
     let model: String
     let levels: [String]
+    /// Speed tiers the model offers; nil while the catalog is unknown.
+    let tiers: [ServiceTier]?
 
-    init(provider: String, model: String, catalogModel: CatalogModel?) {
+    init(provider: String, model: String, catalogModel: CatalogModel?, tiers: [ServiceTier]?) {
         self.provider = provider
         self.model = model
         _effort = AppStorage(wrappedValue: "default", Preferences.effortKey(provider: provider, model: model))
+        _tier = AppStorage(wrappedValue: "", Preferences.serviceTierKey(provider: provider, model: model))
         levels = CatalogModel.effortLevels(provider: provider, model: catalogModel)
+        self.tiers = provider == "codex" ? tiers : []
     }
 
     var body: some View {
@@ -248,6 +254,13 @@ private struct EffortPicker: View {
         .disabled(levels.count == 1)
         .onAppear(perform: reconcile)
         .onChange(of: levels) { _ in reconcile() }
+        .onChange(of: tiers) { _ in reconcile() }
+        if let offered = tiers?.first {
+            Toggle(isOn: Binding(get: { tier == offered.id }, set: { tier = $0 ? offered.id : "" })) {
+                Text("快速模式（\(offered.name)）")
+                Text("\(offered.summary)。只加快模型输出，命令行工具启动的几秒不变，所以回答越长越明显。")
+            }
+        }
         HStack(spacing: 6) {
             Image(systemName: "stopwatch").foregroundStyle(.secondary)
             Text(summary).font(.callout)
@@ -258,17 +271,21 @@ private struct EffortPicker: View {
 
     private var summary: String {
         _ = history // Re-render when a test saves new results.
-        let key = LatencyRun.configurationKey(provider: provider, model: model, effort: effort)
-        guard let run = LatencyRun.latest()[key] else { return "响应时间：这个组合还没测过" }
+        let key = LatencyRun.configurationKey(provider: provider, model: model, effort: effort, serviceTier: tier)
+        guard let run = LatencyRun.latest()[key] else {
+            return tier.isEmpty ? "响应时间：这个组合还没测过" : "响应时间：这个组合的快速模式还没测过"
+        }
         if let median = run.median {
             let failures = run.samples.count - run.successfulTimes.count
             return String(format: "响应时间：%.2f 秒", median) + "（\(run.samples.count) 次中位数"
-                + (failures > 0 ? "，\(failures) 次失败" : "") + "）"
+                + (failures > 0 ? "，\(failures) 次失败" : "") + (tier.isEmpty ? "" : "，快速模式") + "）"
         }
         return "响应时间：上次测试失败（\(run.samples.last?.error ?? "未知错误")）"
     }
 
     private func reconcile() {
         if !levels.contains(effort) { effort = "default" }
+        // Drop a saved tier the model no longer offers, but only once the catalog is known.
+        if !tier.isEmpty, let tiers, !tiers.contains(where: { $0.id == tier }) { tier = "" }
     }
 }

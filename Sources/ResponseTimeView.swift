@@ -9,6 +9,7 @@ struct ResponseTimeView: View {
     @State private var task: Task<Void, Never>?
     @State private var status = ""
     @State private var chosen = 0
+    @State private var tierShown: String?
 
     private struct Row: Identifiable {
         let id: String // model ID, "" for the CLI default
@@ -17,9 +18,26 @@ struct ResponseTimeView: View {
 
     private var current: String { shown ?? provider }
 
+    /// The Codex speed tier whose results are shown: the saved choice until the user flips the switch.
+    private var currentTier: String {
+        guard current == "codex" else { return "" }
+        if let tierShown { return tierShown }
+        let model = UserDefaults.standard.string(forKey: Preferences.modelKey(for: current)) ?? ""
+        return Preferences.serviceTier(provider: current, model: model)
+    }
+
+    /// The faster tier Codex offers (normally "priority"), from the catalog or earlier results.
+    private func offeredTier(_ latest: [String: LatencyRun]) -> ServiceTier? {
+        if let tier = (catalog["codex"]?.models ?? []).lazy.compactMap({ $0.serviceTiers.first }).first { return tier }
+        return latest.values.first { $0.provider == "codex" && $0.serviceTier != nil }
+            .map { ServiceTier(id: $0.serviceTier!, name: "Fast", description: "") }
+    }
+
     var body: some View {
         let latest = decode()
-        let runs = latest.values.filter { $0.provider == current }
+        let offered = current == "codex" ? offeredTier(latest) : nil
+        let tier = offered == nil ? "" : currentTier
+        let runs = latest.values.filter { $0.provider == current && ($0.serviceTier ?? "") == tier }
         let rows = rows(for: runs)
         let columns = (["default"] + (LocalCLI.efforts[current] ?? [])).filter { level in runs.contains { $0.effort == level } }
         let medians = runs.compactMap { $0.successfulTimes.count == $0.samples.count ? $0.median : nil }
@@ -32,6 +50,14 @@ struct ResponseTimeView: View {
                     Text("Codex").tag("codex")
                 }
                 .pickerStyle(.segmented).labelsHidden().frame(width: 220)
+                if let offered {
+                    Picker("速度", selection: Binding(get: { tier }, set: { tierShown = $0 })) {
+                        Text("标准").tag("")
+                        Text("快速").tag(offered.id)
+                    }
+                    .pickerStyle(.segmented).labelsHidden().frame(width: 120)
+                    .help("快速模式（\(offered.name)）的结果单独记录")
+                }
                 Spacer()
                 if task != nil {
                     ProgressView().controlSize(.small)
@@ -45,7 +71,8 @@ struct ResponseTimeView: View {
 
             if rows.isEmpty {
                 Spacer()
-                Text("还没有 \(LocalCLI.displayName(current)) 的测试结果。在「模型」页选好模型和推理强度后，点右上角「测试当前组合」。")
+                Text(tier.isEmpty ? "还没有 \(LocalCLI.displayName(current)) 的测试结果。在「模型」页选好模型和推理强度后，点右上角「测试当前组合」。"
+                     : "还没有快速模式的测试结果。在「模型」页打开快速模式后，点右上角「测试当前组合」。")
                     .foregroundStyle(.secondary).frame(maxWidth: .infinity)
                 Spacer()
             } else {
@@ -64,8 +91,8 @@ struct ResponseTimeView: View {
                                 Text(row.label).lineLimit(1).truncationMode(.middle)
                                     .frame(width: 150, alignment: .leading).help(row.id.isEmpty ? "CLI 默认模型" : row.id)
                                 ForEach(columns, id: \.self) { level in
-                                    cell(latest[LatencyRun.configurationKey(provider: current, model: row.id, effort: level)],
-                                         model: row.id, effort: level, fastest: fastest, slowest: slowest)
+                                    cell(latest[LatencyRun.configurationKey(provider: current, model: row.id, effort: level, serviceTier: tier)],
+                                         model: row.id, effort: level, tier: tier, fastest: fastest, slowest: slowest)
                                 }
                             }
                         }
@@ -101,10 +128,11 @@ struct ResponseTimeView: View {
     }
 
     @ViewBuilder
-    private func cell(_ run: LatencyRun?, model: String, effort: String, fastest: Double, slowest: Double) -> some View {
+    private func cell(_ run: LatencyRun?, model: String, effort: String, tier: String, fastest: Double, slowest: Double) -> some View {
         let selected = provider == current
             && (UserDefaults.standard.string(forKey: Preferences.modelKey(for: current)) ?? "") == model
             && (UserDefaults.standard.string(forKey: Preferences.effortKey(provider: current, model: model)) ?? "default") == effort
+            && Preferences.serviceTier(provider: current, model: model) == tier
         let failures = run.map { $0.samples.count - $0.successfulTimes.count } ?? 0
         let text: String = {
             guard let run else { return "—" }
@@ -118,7 +146,7 @@ struct ResponseTimeView: View {
             return .green.opacity(0.08 + 0.32 * (1 - min(max(position, 0), 1)))
         }()
         Button {
-            choose(model: model, effort: effort)
+            choose(model: model, effort: effort, tier: tier)
         } label: {
             Text(text)
                 .font(.callout)
@@ -136,7 +164,7 @@ struct ResponseTimeView: View {
         guard let run else { return "还没测过。点一下改用这个组合，再点「测试当前组合」。" }
         let date = run.started.formatted(date: .abbreviated, time: .shortened)
         let times = run.successfulTimes
-        var lines = ["\(run.label) · \(effort == "default" ? "CLI 默认" : effort)"]
+        var lines = ["\(run.label) · \(effort == "default" ? "CLI 默认" : effort)" + (run.serviceTier == nil ? "" : " · 快速模式")]
         if let first = times.first, let last = times.last, let median = run.median {
             lines.append(String(format: "中位 %.2f 秒，最快 %.2f，最慢 %.2f", median, first, last))
         }
@@ -160,11 +188,12 @@ struct ResponseTimeView: View {
         .font(.caption)
     }
 
-    private func choose(model: String, effort: String) {
+    private func choose(model: String, effort: String, tier: String) {
         let defaults = UserDefaults.standard
         defaults.set(current, forKey: "provider")
         defaults.set(model, forKey: Preferences.modelKey(for: current))
         defaults.set(effort, forKey: Preferences.effortKey(provider: current, model: model))
+        if current == "codex" { defaults.set(tier, forKey: Preferences.serviceTierKey(provider: current, model: model)) }
         provider = current
         chosen += 1
     }
@@ -173,10 +202,12 @@ struct ResponseTimeView: View {
         guard task == nil else { return }
         let backend = Preferences.backend()
         shown = backend.provider
+        tierShown = backend.provider == "codex" ? backend.serviceTier : nil
         let id = backend.model
         let label = catalog[backend.provider]?.models?.first { $0.id == id }?.label
             ?? (id.isEmpty ? "\(backend.displayName) 默认模型" : id)
         let configuration = "\(label) · \(backend.effort == "default" ? "CLI 默认" : backend.effort)"
+            + (backend.serviceTier.isEmpty ? "" : " · 快速模式")
         status = "\(configuration) · 正在测试 1/\(LatencyRun.repetitions)"
         task = Task { @MainActor in
             defer { task = nil }

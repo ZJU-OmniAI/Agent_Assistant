@@ -13,6 +13,8 @@ struct LatencyRun: Codable, Identifiable {
     let label: String
     let effort: String
     var samples: [LatencySample]
+    /// The Codex speed tier used, nil for the standard tier (and for runs saved before tiers existed).
+    var serviceTier: String? = nil
 
     static let repetitions = 3
     static let source = "The library opens at nine."
@@ -32,7 +34,8 @@ struct LatencyRun: Codable, Identifiable {
     @MainActor static func measure(backend: LocalCLI, label: String, onSample: (Self) -> Void) async throws -> Self {
         let messages = Conversation(source: source).messages(asking: question)
         var run = Self(id: UUID(), started: Date(), provider: backend.provider, model: backend.model,
-                       label: label, effort: backend.effort, samples: [])
+                       label: label, effort: backend.effort, samples: [],
+                       serviceTier: backend.serviceTier.isEmpty ? nil : backend.serviceTier)
         for _ in 0..<repetitions {
             try Task.checkCancellation()
             let start = ContinuousClock.now
@@ -52,19 +55,21 @@ struct LatencyRun: Codable, Identifiable {
         return run
     }
 
-    /// The newest run of every provider/model/effort combination.
+    /// The newest run of every provider/model/effort/tier combination.
     static func latest(in defaults: UserDefaults = .standard) -> [String: Self] {
         var result: [String: Self] = [:]
         for run in history(in: defaults) {
-            let key = configurationKey(provider: run.provider, model: run.model, effort: run.effort)
+            let key = configurationKey(provider: run.provider, model: run.model, effort: run.effort, serviceTier: run.serviceTier)
             if let existing = result[key], existing.started >= run.started { continue }
             result[key] = run
         }
         return result
     }
 
-    static func configurationKey(provider: String, model: String, effort: String) -> String {
-        [provider, model.trimmed.isEmpty ? "" : model.trimmed, effort].joined(separator: "|")
+    static func configurationKey(provider: String, model: String, effort: String, serviceTier: String? = nil) -> String {
+        let base = [provider, model.trimmed.isEmpty ? "" : model.trimmed, effort].joined(separator: "|")
+        guard let serviceTier, !serviceTier.isEmpty else { return base }
+        return base + "|" + serviceTier
     }
 
     static func history(in defaults: UserDefaults = .standard) -> [Self] {
@@ -79,7 +84,7 @@ struct LatencyRun: Codable, Identifiable {
         var configurations = Set<[String]>()
         var rows = [Self]()
         for (index, candidate) in candidates.enumerated() {
-            let key = [candidate.provider, candidate.model, candidate.effort]
+            let key = [candidate.provider, candidate.model, candidate.effort, candidate.serviceTier ?? ""]
             let firstForConfiguration = configurations.insert(key).inserted
             if index < 30 || firstForConfiguration { rows.append(candidate) }
         }

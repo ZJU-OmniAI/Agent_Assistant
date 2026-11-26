@@ -6,6 +6,13 @@ enum Preferences {
     static func effortKey(provider: String, model: String) -> String {
         "effort.\(provider).\(model.isEmpty ? "default" : model)"
     }
+    static func serviceTierKey(provider: String, model: String) -> String {
+        "serviceTier.\(provider).\(model.isEmpty ? "default" : model)"
+    }
+    /// The saved Codex speed tier for a model; Claude Code has none.
+    static func serviceTier(provider: String, model: String, in defaults: UserDefaults = .standard) -> String {
+        provider == "codex" ? defaults.string(forKey: serviceTierKey(provider: provider, model: model)) ?? "" : ""
+    }
 
     static func migrateModel(in defaults: UserDefaults = .standard) {
         guard let legacy = defaults.string(forKey: "model") else { return }
@@ -21,7 +28,8 @@ enum Preferences {
         let provider = LocalCLI.providers.contains(saved) ? saved : "claude"
         let model = defaults.string(forKey: modelKey(for: provider)) ?? ""
         let effort = defaults.string(forKey: effortKey(provider: provider, model: model)) ?? "default"
-        return LocalCLI(provider: provider, model: model, effort: effort)
+        return LocalCLI(provider: provider, model: model, effort: effort,
+                        serviceTier: serviceTier(provider: provider, model: model, in: defaults))
     }
 
     static var translationPrompt: String {

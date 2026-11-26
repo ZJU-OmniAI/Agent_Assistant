@@ -84,8 +84,10 @@ if args[:1] == ["app-server"]:
             if message["params"].get("cursor") == "page-2":
                 result = {"data": [{"model": "gpt-two", "displayName": "GPT Two"}], "nextCursor": None}
             else:
-                result = {"data": [{"model": "gpt-fixture", "displayName": "GPT Fixture",
-                                    "supportedReasoningEfforts": [{"reasoningEffort": "low"}, {"reasoningEffort": "high"}]},
+                result = {"data": [{"model": "gpt-fixture", "displayName": "GPT Fixture", "isDefault": True,
+                                    "supportedReasoningEfforts": [{"reasoningEffort": "low"}, {"reasoningEffort": "high"}],
+                                    "serviceTiers": [{"id": "priority", "name": "Fast", "description": "1.5x speed, increased usage"},
+                                                     {"id": "Bad Tier!", "name": "x"}]},
                                    {"model": "hidden-one", "hidden": True}], "nextCursor": "page-2"}
             print(json.dumps({"id": 2, "result": result}), flush=True)
     sys.exit(0)
