@@ -127,7 +127,7 @@ struct AssistantView: View {
                     }
                     ForEach(session.conversation.turns) { turn in
                         questionLine(turn.question).id(turn.id)
-                        Text(turn.answer).textSelection(.enabled).lineSpacing(3)
+                        MarkdownText(turn.answer).textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
                         Button {
                             let board = NSPasteboard.general
@@ -190,5 +190,128 @@ struct AssistantView: View {
         }
         .frame(minWidth: 340, minHeight: 275)
         .onAppear { composing = true }
+    }
+}
+
+/// The block structure of a model answer. Models often reply in Markdown; showing the
+/// raw `##` and `**` reads badly, so headings, lists, quotes, code and rules are laid out
+/// here and inline styles go through Foundation's Markdown parser.
+enum MarkdownBlock: Equatable {
+    case heading(level: Int, text: String)
+    case paragraph(String)
+    case bullet(indent: Int, marker: String, text: String)
+    case quote(String)
+    case code(String)
+    case rule
+
+    static func parse(_ source: String) -> [MarkdownBlock] {
+        var blocks: [MarkdownBlock] = []
+        var paragraph: [String] = []
+        var fence: [String]?
+        var table: [String] = []
+        func flush() {
+            if !paragraph.isEmpty { blocks.append(.paragraph(paragraph.joined(separator: "\n"))) }
+            if !table.isEmpty { blocks.append(.code(table.joined(separator: "\n"))) }
+            paragraph = []
+            table = []
+        }
+        for raw in source.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n") {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if let lines = fence {
+                if line.hasPrefix("```") { blocks.append(.code(lines.joined(separator: "\n"))); fence = nil }
+                else { fence = lines + [raw] }
+                continue
+            }
+            if line.hasPrefix("```") { flush(); fence = []; continue }
+            if line.isEmpty { flush(); continue }
+            if line.hasPrefix("|") {
+                if !paragraph.isEmpty { flush() }
+                table.append(line)
+                continue
+            }
+            if !table.isEmpty { flush() }
+            let hashes = line.prefix { $0 == "#" }.count
+            if (1...6).contains(hashes), line.dropFirst(hashes).first == " " {
+                flush()
+                blocks.append(.heading(level: hashes, text: line.dropFirst(hashes).trimmingCharacters(in: .whitespaces)))
+                continue
+            }
+            let marks = line.filter { $0 != " " }
+            if marks.count >= 3, let first = marks.first, "-*_".contains(first), marks.allSatisfy({ $0 == first }) {
+                flush()
+                blocks.append(.rule)
+                continue
+            }
+            if line.hasPrefix(">") {
+                flush()
+                let text = line.dropFirst().trimmingCharacters(in: .whitespaces)
+                if case .quote(let previous)? = blocks.last { blocks[blocks.count - 1] = .quote(previous + "\n" + text) }
+                else { blocks.append(.quote(text)) }
+                continue
+            }
+            if let item = listItem(line) {
+                flush()
+                let leading = raw.prefix { $0 == " " || $0 == "\t" }.reduce(0) { $0 + ($1 == "\t" ? 4 : 1) }
+                blocks.append(.bullet(indent: min(leading / 2, 3), marker: item.marker, text: item.text))
+                continue
+            }
+            paragraph.append(line)
+        }
+        if let lines = fence { blocks.append(.code(lines.joined(separator: "\n"))) }
+        flush()
+        return blocks
+    }
+
+    private static func listItem(_ line: String) -> (marker: String, text: String)? {
+        if let first = line.first, "-*+".contains(first), line.dropFirst().first == " " {
+            return ("•", line.dropFirst(2).trimmingCharacters(in: .whitespaces))
+        }
+        let digits = line.prefix { $0.isASCII && $0.isNumber }
+        guard !digits.isEmpty, digits.count <= 3 else { return nil }
+        let rest = line.dropFirst(digits.count)
+        guard let dot = rest.first, dot == "." || dot == ")", rest.dropFirst().first == " " else { return nil }
+        return (digits + ".", rest.dropFirst(2).trimmingCharacters(in: .whitespaces))
+    }
+}
+
+struct MarkdownText: View {
+    let blocks: [MarkdownBlock]
+
+    init(_ text: String) { blocks = MarkdownBlock.parse(text) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in view(for: block) }
+        }
+    }
+
+    @ViewBuilder private func view(for block: MarkdownBlock) -> some View {
+        switch block {
+        case .heading(let level, let text):
+            Text(Self.inline(text)).font(level <= 2 ? .headline : .subheadline.weight(.semibold)).padding(.top, 2)
+        case .paragraph(let text):
+            Text(Self.inline(text)).lineSpacing(3)
+        case .bullet(let indent, let marker, let text):
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(marker).foregroundStyle(.secondary)
+                Text(Self.inline(text)).lineSpacing(3)
+            }
+            .padding(.leading, CGFloat(indent) * 16)
+        case .quote(let text):
+            Text(Self.inline(text)).foregroundStyle(.secondary).lineSpacing(3).padding(.leading, 10)
+                .overlay(alignment: .leading) { RoundedRectangle(cornerRadius: 1.5).fill(.quaternary).frame(width: 3) }
+        case .code(let text):
+            ScrollView(.horizontal) {
+                Text(text).font(.system(.callout, design: .monospaced)).padding(8)
+            }
+            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
+        case .rule:
+            Divider()
+        }
+    }
+
+    static func inline(_ text: String) -> AttributedString {
+        let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
     }
 }

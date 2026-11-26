@@ -1,8 +1,45 @@
 import AppKit
 import SwiftUI
 
+/// A button on the selection strip. The strip never becomes key, and standard bezels
+/// draw in a non-key window as pale gray, so these draw their own fill to stay legible.
 private final class ActionButton: NSButton {
+    var hovering = false { didSet { refreshFill() } }
+    override var isHighlighted: Bool { didSet { refreshFill() } }
+
+    convenience init(title: String, symbol: String, target: AnyObject, action: Selector) {
+        self.init(title: title, target: target, action: action)
+        image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        imagePosition = .imageLeading
+        imageHugsTitle = true
+        isBordered = false
+        contentTintColor = .labelColor
+        font = .systemFont(ofSize: 13, weight: .medium)
+        wantsLayer = true
+        layer?.cornerRadius = 7
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                       owner: self))
+        refreshFill()
+    }
+
+    override var intrinsicContentSize: NSSize {
+        let size = super.intrinsicContentSize
+        return NSSize(width: size.width + 18, height: max(size.height, 18) + 8)
+    }
+
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func mouseEntered(with event: NSEvent) { hovering = true }
+    override func mouseExited(with event: NSEvent) { hovering = false }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        refreshFill()
+    }
+
+    private func refreshFill() {
+        let fill = NSColor.labelColor.withAlphaComponent(isHighlighted ? 0.18 : hovering ? 0.12 : 0.06)
+        effectiveAppearance.performAsCurrentDrawingAppearance { layer?.backgroundColor = fill.cgColor }
+    }
 }
 
 private final class SelectionPanel: NSPanel {
@@ -128,25 +165,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private func showStrip(_ text: String, at point: NSPoint) {
         if strip == nil {
             let stack = NSStackView()
-            stack.spacing = 2
-            stack.edgeInsets = NSEdgeInsets(top: 4, left: 6, bottom: 4, right: 6)
+            stack.spacing = 4
+            stack.edgeInsets = NSEdgeInsets(top: 4, left: 5, bottom: 4, right: 5)
             for (title, icon, action) in [("翻译", "character.book.closed", #selector(translate)),
                                          ("提问", "bubble.left", #selector(ask))] {
-                let button = ActionButton(title: title, target: self, action: action)
-                button.image = NSImage(systemSymbolName: icon, accessibilityDescription: nil)
-                button.imagePosition = .imageLeading
-                button.imageHugsTitle = true
-                button.bezelStyle = .inline
-                button.controlSize = .regular
-                button.font = .systemFont(ofSize: 13, weight: .medium)
-                stack.addArrangedSubview(button)
+                stack.addArrangedSubview(ActionButton(title: title, symbol: icon, target: self, action: action))
             }
             let surface = NSVisualEffectView()
             surface.material = .popover
             surface.state = .active
-            surface.wantsLayer = true
-            surface.layer?.cornerRadius = 10
-            surface.layer?.masksToBounds = true
+            // A mask image, unlike a layer corner radius, also shapes the window shadow.
+            let mask = NSImage(size: NSSize(width: 21, height: 21), flipped: false) { rect in
+                NSColor.black.setFill()
+                NSBezierPath(roundedRect: rect, xRadius: 10, yRadius: 10).fill()
+                return true
+            }
+            mask.capInsets = NSEdgeInsets(top: 10, left: 10, bottom: 10, right: 10)
+            mask.resizingMode = .stretch
+            surface.maskImage = mask
             stack.translatesAutoresizingMaskIntoConstraints = false
             surface.addSubview(stack)
             NSLayoutConstraint.activate([stack.leadingAnchor.constraint(equalTo: surface.leadingAnchor),
@@ -167,6 +203,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         selection = text
         anchor = point
         guard let strip else { return }
+        // A hidden strip gets no mouse-exited event, so clear any leftover hover.
+        (strip.contentView?.subviews.first as? NSStackView)?.arrangedSubviews.forEach { ($0 as? ActionButton)?.hovering = false }
         strip.setFrameOrigin(origin(for: strip.frame.size, near: point))
         strip.orderFrontRegardless()
     }

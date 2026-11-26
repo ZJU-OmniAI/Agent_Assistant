@@ -157,6 +157,14 @@ enum BackendChecks {
         check(run.samples.count == 3 && run.successfulTimes.count == 3 && updates == 3 && run.median! > 0, "latency run")
         let latest = LatencyRun.latest(in: latencyPrefs)
         check(latest[LatencyRun.configurationKey(provider: "claude", model: "sonnet", effort: "low")]?.id == run.id, "latest by configuration")
+        // Answers: Markdown blocks are laid out instead of showing raw symbols.
+        let blocks = MarkdownBlock.parse("## 两个概念\n\n**Bootstrapping**：自举\n- 短时域\n  2) 子项\n> 注：一\n> 二\n---\n```\nV(s) ← r\n```\n| a | b |\n|---|---|\n#话题 不是标题")
+        check(blocks == [.heading(level: 2, text: "两个概念"), .paragraph("**Bootstrapping**：自举"),
+                         .bullet(indent: 0, marker: "•", text: "短时域"), .bullet(indent: 1, marker: "2.", text: "子项"),
+                         .quote("注：一\n二"), .rule, .code("V(s) ← r"), .code("| a | b |\n|---|---|"),
+                         .paragraph("#话题 不是标题")], "markdown blocks \(blocks)")
+        check(MarkdownBlock.parse("```\n未闭合") == [.code("未闭合")], "unclosed fence")
+        check(String(MarkdownText.inline("**粗** `x`").characters) == "粗 x", "inline markdown")
         print("All backend checks passed.")
     }
 }
