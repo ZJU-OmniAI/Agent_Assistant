@@ -1,77 +1,99 @@
-# Agent Assistant
+<div align="center">
 
-macOS 菜单栏上的划词助手。在网页、PDF 和各种应用里选中一段文字，鼠标旁出现「翻译 / 提问」，点一下就由这台 Mac 上已登录的 **Claude Code** 或 **Codex** 回答，还能接着追问。
+<img src="assets/AppIcon.iconset/icon_256x256.png" height="88" alt="Agent Assistant icon">
 
-- 原生 AppKit + SwiftUI，安装包约 3 MB（含 Apple 芯片与 Intel 两份程序），平时只等鼠标事件，几乎不占资源。
-- 直接调用本机命令行工具，沿用它们的登录和额度。不需要另开服务，也不需要 API key。
-- 只有点了「翻译」或发出问题时，原文才会交给所选模型。只是选中文字时什么都不发。
+<h1>Agent Assistant</h1>
 
-## 安装
+<h3>Select text anywhere on your Mac, then translate it or ask about it.</h3>
 
-1. 需要 macOS 13 及以上版本和 Apple Command Line Tools。运行 `bash build.sh`，会生成 `dist/Agent Assistant.app`，同时支持 Apple 芯片和 Intel 芯片。
-2. 把它拖到「应用程序」（或 `~/Applications`），双击打开。菜单栏会出现一个取景框图标。
-3. 第一次打开会弹出设置窗口。点「前往授权」，在「系统设置 → 隐私与安全性 → 辅助功能」里打开 Agent Assistant 的开关。不用重启，设置页会自动变成「已允许辅助功能」。
-4. 本机要装好并登录至少一个命令行工具：Claude Code（`claude auth login`）或 Codex（`codex login`）。在设置的「模型」页点「检测」可以确认。
+<p>A lightweight macOS menu-bar assistant. Answers come from the Claude Code or Codex CLI already signed in on your Mac, with no server and no API key.</p>
 
-**为什么重新构建后不用重新授权**：辅助功能授权认的是程序签名。第一次构建时，`signing.sh` 会在 `~/.agent-assistant/signing/` 生成一张本机自签名证书，之后每次都用它签名，签名不变，授权就一直有效。如果改用临时签名（`codesign -s -`），每次构建签名都会变，系统设置里的开关还显示"已打开"，实际已经失效。
+[![Version](https://img.shields.io/badge/version-1.0-1f7ae0.svg)](Info.plist)
+[![macOS](https://img.shields.io/badge/macOS-13%2B-555555.svg)](#install)
+[![Swift](https://img.shields.io/badge/Swift-AppKit_%C2%B7_SwiftUI-F05138.svg)](Sources)
+[![License: MIT](https://img.shields.io/badge/license-MIT-2ea44f)](LICENSE)
 
-## 使用
+**English** · [简体中文](README.zh-CN.md)
 
-- **划词**：拖选或双击文字，松开鼠标后点「翻译」立即出译文，点「提问」先打开输入框。浮窗里可以一直追问，每次请求都带上原文和最近八轮问答。
-- **读不到选区时**：Chrome 自带的 PDF 阅读器、刚打开的网页、飞书等应用，不向系统提供选中的文字。这时助手会向该应用发一次 ⌘C 取词，取完立刻把剪贴板恢复原样。设置里可以关掉这一项。在 Finder、密码框里，以及拖动窗口、按钮、滚动条时，不会这样做。
-- **系统「服务」菜单**：在支持服务的应用里选中文字，右键 →「服务」→「用 Agent Assistant 翻译 / 提问」。
-- **剪贴板入口**：先 ⌘C，再从菜单栏点「翻译剪贴板文字」或「用剪贴板文字提问…」。这两个入口不需要辅助功能权限。
+[Install](#install) · [Usage](#usage) · [Settings](#settings-window) · [Response times](#response-times) · [How it works](#how-it-works) · [Development](#development)
 
-## 设置窗口
+</div>
 
-| 页面 | 内容 |
+Select a passage in a web page, a PDF or any other app. **翻译 (Translate)** and **提问 (Ask)** buttons appear next to the pointer. Click one and the **Claude Code** or **Codex** CLI signed in on this Mac answers. You can keep asking follow-up questions in the same panel.
+
+- Native AppKit + SwiftUI. The app is about 3 MB and includes builds for both Apple silicon and Intel. While idle it only listens for mouse events, so it uses almost no resources.
+- It calls the command-line tools directly and uses their sign-in and usage limits. No extra service, no API key.
+- Your text goes to the selected model only when you click Translate or send a question. Selecting text alone sends nothing.
+- The interface is currently in Chinese. Translations can go into Simplified or Traditional Chinese, English, Japanese, Korean, French, German or Spanish.
+
+## Install
+
+1. You need macOS 13 or later and the Apple Command Line Tools. Run `bash build.sh`. It builds `dist/Agent Assistant.app` for both Apple silicon and Intel.
+2. Drag the app to Applications (or `~/Applications`) and open it. A viewfinder icon appears in the menu bar.
+3. On first launch the settings window opens. Click **前往授权 (Grant access)**, then turn on Agent Assistant under **System Settings → Privacy & Security → Accessibility**. No restart is needed: the settings page changes to **已允许辅助功能 (Accessibility allowed)** on its own.
+4. Install and sign in to at least one CLI: Claude Code (`claude auth login`) or Codex (`codex login`). The check button on the **模型 (Model)** tab confirms it works.
+
+**Why rebuilding does not cost you the permission.** macOS ties the Accessibility permission to the app's code signature. On the first build, `signing.sh` creates a self-signed certificate in `~/.agent-assistant/signing/` and signs every later build with it. The signature stays the same, so the permission stays valid. With an ad-hoc signature (`codesign -s -`), the signature changes on every build. System Settings still shows the switch as on, but the permission no longer works.
+
+## Usage
+
+- **Select text**: drag to select or double-click, then release the mouse. Click **翻译 (Translate)** for an instant translation, or **提问 (Ask)** to type a question first. You can keep asking in the panel. Each request includes the original text and the latest eight questions and answers.
+- **When the selection cannot be read**: Chrome's built-in PDF viewer, freshly opened web pages and apps such as Feishu (Lark) do not share the selected text with macOS. The assistant then sends ⌘C to that app once to copy it, and restores your clipboard right afterwards. You can turn this off in settings. It never does this in Finder or in password fields, or when you drag a window or click a button or scroll bar.
+- **Services menu**: in apps that support Services, select text and right-click → **Services** → **用 Agent Assistant 翻译 / 提问** (Translate / Ask with Agent Assistant).
+- **Clipboard**: press ⌘C first, then choose **翻译剪贴板文字** (Translate clipboard text) or **用剪贴板文字提问…** (Ask about clipboard text) from the menu bar. These two do not need the Accessibility permission.
+
+## Settings window
+
+| Tab | What it contains |
 | --- | --- |
-| 划词 | 是否显示浮条、授权状态、⌘C 取词开关、译文语言、剪贴板入口 |
-| 模型 | 选 Claude Code 或 Codex、模型、推理强度（effort）。下面直接显示这个组合实测的响应时间。还有检测登录状态的按钮 |
-| 响应时间 | 「模型 × 推理强度」矩阵，每格是 3 次请求的中位耗时（秒）。绿色越深越快，「额度」表示当时额度已用尽，蓝框是当前在用的组合。**点格子就切换到那个组合**。右上角可以测当前组合 |
+| 划词 (Selection) | Whether to show the buttons, permission status, the ⌘C fallback switch, translation language, and the clipboard actions |
+| 模型 (Model) | Claude Code or Codex, the model, and the reasoning effort. The measured response time for that combination appears right below. A button checks the sign-in status |
+| 响应时间 (Response time) | A model × reasoning-effort grid. Each cell is the median of 3 requests, in seconds. Darker green is faster, 额度 (quota) means the usage limit had run out, and a blue border marks the combination in use. **Click a cell to switch to that combination.** The button at the top right tests the current combination |
 
-菜单栏的「响应时间…」直接打开第三页。
+The menu-bar item **响应时间… (Response times…)** opens the third tab directly.
 
-## 响应时间实测（2026-11-26）
+## Response times
 
-固定把 `The library opens at nine.` 译成简体中文，每个组合连续请求 3 次，从发出请求计时到收到完整译文，包含命令行工具的启动时间。154 个组合中，122 个三次全部成功，32 个因额度用尽没取得结果（当时 Codex 额度用完，Fable 不在订阅套餐里）。
+Measured on 2026-11-26. Each combination translated the fixed sentence `The library opens at nine.` into Simplified Chinese three times in a row. Each time runs from sending the request to receiving the full translation and includes CLI startup. Of 154 combinations, 122 succeeded all three times. The other 32 returned no result because the usage limit had run out: the Codex quota was used up at the time, and Fable was not included in the subscription plan used.
 
-- 最快的是 Sonnet 5.5，各档中位数 3.3–3.6 秒；Haiku 5.5 约 3.8–5.4 秒。
-- Claude 的其他模型大多在 4–6 秒，Codex 各模型大多在 6–9 秒。
-- 推理强度对这种短句翻译影响很小。
+- Sonnet 5.5 was the fastest, with a median of 3.3–3.6 s at every effort level. Haiku 5.5 took about 3.8–5.4 s.
+- Most other Claude models took 4–6 s. Most Codex models took 6–9 s.
+- Reasoning effort made little difference for translating a short sentence.
 
-原始数据在 [`benchmarks/2026-11-26/results.json`](benchmarks/2026-11-26/results.json)，表格在 [`benchmarks/2026-11-26/响应时间-全部组合.xlsx`](benchmarks/2026-11-26/响应时间-全部组合.xlsx)。这批数据是通过 Paper Mind 本机桥接测的，也会被 App 的响应时间页读入。桥接同样是每次请求启动一次命令行工具，所以耗时可以直接比较。
+The raw data is in [`benchmarks/2026-11-26/results.json`](benchmarks/2026-11-26/results.json) and the spreadsheet in [`benchmarks/2026-11-26/响应时间-全部组合.xlsx`](benchmarks/2026-11-26/响应时间-全部组合.xlsx). These runs went through the local bridge of [Paper_Mind](https://github.com/ZJU-OmniAI/Paper_Mind), and the app's Response time tab reads them too. The bridge also starts the CLI once per request, so the times compare directly.
 
-## 工作方式
+## How it works
 
-每次请求都在临时目录里启动一次命令行工具，原文和对话从标准输入传入，结束后删除临时目录。点「停止」会结束整组进程。
+Each request starts the CLI once in a temporary directory, passes the text and conversation on standard input, and deletes the directory afterwards. Clicking **停止 (Stop)** ends the whole process group.
 
-- **Claude Code**：`claude -p --output-format json`，关闭工具、MCP、斜杠命令和 hooks，不保存会话。
-- **Codex**：`codex exec --json --ephemeral`，只读沙箱，忽略用户配置，关闭命令执行、网页搜索和多智能体。
-- **找命令行工具**：搜索 PATH、`~/.local/bin`、Homebrew、nvm，以及 ChatGPT.app 自带的 Codex。找到多份时用 `--version` 最新且能运行的一份，旧的 npm 版本不会挡住新模型。
-- **环境**：从 Finder 打开的 App 只有很少的环境变量。助手会从登录 shell 读取 `PATH` 和代理设置（`HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY` 及小写形式），其他变量不读，所以终端里能用的代理这里也能用。
-- **模型列表**：从命令行工具自己读取（Claude 的 `initialize`，Codex 的 `app-server model/list`），不产生对话，也不消耗额度。
+- **Claude Code**: `claude -p --output-format json`, with tools, MCP, slash commands and hooks turned off, and no session saved.
+- **Codex**: `codex exec --json --ephemeral`, with a read-only sandbox, the user config ignored, and command execution, web search and multi-agent turned off.
+- **Finding the CLI**: it searches PATH, `~/.local/bin`, Homebrew, nvm and the Codex CLI bundled with ChatGPT.app. If it finds several copies, it uses the one with the newest `--version` that actually runs, so an old npm install does not hide newer models.
+- **Environment**: an app opened from Finder gets very few environment variables. The assistant reads `PATH` and the proxy settings (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY` and their lowercase forms) from your login shell, and nothing else. A proxy that works in Terminal therefore works here too.
+- **Model list**: read from the CLIs themselves (Claude's `initialize`, Codex's `app-server model/list`). This starts no conversation and uses no quota.
 
-可以用 `AGENT_ASSISTANT_CLAUDE_BIN`、`AGENT_ASSISTANT_CODEX_BIN` 指定命令行工具路径。
+`AGENT_ASSISTANT_CLAUDE_BIN` and `AGENT_ASSISTANT_CODEX_BIN` set the CLI paths explicitly.
 
-## 开发
+## Development
 
 ```
 Sources/
-  App.swift             菜单栏、浮条、对话浮窗、设置窗口
-  Selection.swift       全局鼠标监听、辅助功能取词、⌘C 兜底
-  AssistantView.swift   对话浮窗与会话
-  Backend.swift         调用 Claude Code / Codex、错误归类、模型目录
-  Subprocess.swift      子进程（独立进程组）、登录 shell 环境、找最新版命令行工具
-  Latency.swift         响应时间测试与记录
-  ResponseTimeView.swift / SettingsView.swift   设置窗口
-Tests/                  用假的 claude / codex 命令测试后端
-tools/make-icon.swift   生成 assets/AppIcon.iconset
+  App.swift             Menu bar, selection buttons, chat panel, settings window
+  Selection.swift       Global mouse monitor, reading the selection via Accessibility, ⌘C fallback
+  AssistantView.swift   Chat panel and conversation session
+  Backend.swift         Calling Claude Code / Codex, error classification, model catalog
+  Subprocess.swift      Child processes (own process group), login-shell environment, newest-CLI lookup
+  Latency.swift         Response-time tests and records
+  ResponseTimeView.swift / SettingsView.swift   Settings window
+Tests/                  Backend checks against fake claude / codex CLIs
+tools/make-icon.swift   Generates assets/AppIcon.iconset
 ```
 
-- 测试：`bash Tests/run.sh`。测试用两个假命令行工具，覆盖找最新版、模型目录、两种工具的生成和参数、额度和登录错误、停止时清掉整组进程、中途换模型、响应时间记录。
-- 取词调试：`defaults write org.agent-assistant.app debugSelection -bool true`，再运行 `log stream --predicate 'process == "AgentAssistant"'`，可以看到每次划词走了哪条路径、花了多久。用完记得 `defaults delete org.agent-assistant.app debugSelection`。
+- Tests: `bash Tests/run.sh`. They use two fake CLIs and cover finding the newest version, model catalogs, generation and arguments for both tools, quota and sign-in errors, ending the whole process group on stop, switching models mid-conversation, and response-time records.
+- Selection debugging: run `defaults write org.agent-assistant.app debugSelection -bool true`, then `log stream --predicate 'process == "AgentAssistant"'` to see which path each selection took and how long it took. Turn it off afterwards with `defaults delete org.agent-assistant.app debugSelection`.
 
-## 许可
+[Issues](https://github.com/ZJU-OmniAI/Agent_Assistant/issues) and pull requests are welcome.
 
-MIT，见 [LICENSE](LICENSE)。
+## License
+
+[MIT](LICENSE). Claude Code, Codex and their services remain subject to their own terms.
