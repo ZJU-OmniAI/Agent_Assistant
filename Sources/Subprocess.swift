@@ -31,12 +31,15 @@ final class ChildProcess: @unchecked Sendable {
     private var exited = false
     private(set) var exceeded = false
     private let maxOutput: Int
+    private let retainOutput: Bool
     private let onStdout: ((ChildProcess, Data) -> Void)?
     private let done = DispatchGroup()
 
+    /// `retainOutput: false` is for long-lived processes: standard output only goes to `onStdout`.
     init(_ executable: String, _ arguments: [String], environment: [String: String], directory: String,
-         maxOutput: Int = 4 << 20, onStdout: ((ChildProcess, Data) -> Void)? = nil) throws {
+         maxOutput: Int = 4 << 20, retainOutput: Bool = true, onStdout: ((ChildProcess, Data) -> Void)? = nil) throws {
         self.maxOutput = maxOutput
+        self.retainOutput = retainOutput
         self.onStdout = onStdout
         var pipes: [[Int32]] = []
         for _ in 0..<3 {
@@ -107,7 +110,9 @@ final class ChildProcess: @unchecked Sendable {
             let chunk = Data(buffer[0..<count])
             lock.lock()
             var overflow = false
-            if isStdout {
+            if isStdout && !retainOutput {
+                // Streamed to the callback only.
+            } else if isStdout {
                 if stdout.count + count > maxOutput { exceeded = true; overflow = true }
                 else { stdout.append(chunk) }
             } else {

@@ -12,6 +12,11 @@ func waitUntil(_ timeout: TimeInterval = 10, _ condition: @MainActor () -> Bool)
     }
 }
 
+func serverEvents(_ fixture: URL) -> [[String: Any]] {
+    let text = (try? String(contentsOf: fixture.appendingPathComponent("codex-server.log"), encoding: .utf8)) ?? ""
+    return text.split(separator: "\n").compactMap { (try? JSONSerialization.jsonObject(with: Data($0.utf8))) as? [String: Any] }
+}
+
 func lastCall(_ name: String, _ fixture: URL) -> [String: Any] {
     let text = (try? String(contentsOf: fixture.appendingPathComponent(name + ".log"), encoding: .utf8)) ?? ""
     let line = text.split(separator: "\n").last.map(String.init) ?? "{}"
@@ -77,7 +82,45 @@ enum BackendChecks {
         check(claudeArgs.contains("--model") && claudeArgs.contains("sonnet") && claudeArgs.contains("--effort")
               && claudeArgs.contains("high") && claudeArgs.contains("--tools"), "claude args \(claudeArgs)")
         check((claudeCall["stdin"] as? String ?? "").contains("选中的多行原文"), "source text reaches the CLI")
+        // Codex goes through the resident app-server.
         let codexCLI = LocalCLI(provider: "codex", model: "gpt-fixture", effort: "low")
+        check(try await codexCLI.generate(messages) == "动作上的分布。", "codex reply via app-server")
+        let serverCall = lastCall("codex", fixture)
+        let turnParams = serverCall["turn"] as? [String: Any] ?? [:]
+        let threadParams = serverCall["thread"] as? [String: Any] ?? [:]
+        let launch = serverCall["args"] as? [String] ?? []
+        check(serverCall["mode"] as? String == "server" && turnParams["model"] as? String == "gpt-fixture"
+              && turnParams["effort"] as? String == "low" && turnParams["serviceTierForTurn"] as? String == "default",
+              "codex turn \(turnParams)")
+        let threadMCP = (threadParams["config"] as? [String: Any])?["mcp_servers"] as? [String: Any]
+        check(threadParams["sandbox"] as? String == "read-only" && threadParams["ephemeral"] as? Bool == true
+              && threadParams["approvalPolicy"] as? String == "never"
+              && (threadMCP?["fixture_mcp"] as? [String: Any])?["enabled"] as? Bool == false, "codex thread \(threadParams)")
+        check(launch.contains("features.shell_snapshot=false") && launch.contains("features.plugins=false") && launch.contains("notify=[]")
+              && !launch.contains("--disable"), "server launch \(launch)")
+        check((serverCall["stdin"] as? String ?? "").contains("选中的多行原文"), "source text reaches Codex")
+        let usedThread = serverCall["threadId"] as? String ?? ""
+        try await waitUntil(5) { serverEvents(fixture).contains { $0["unsubscribe"] as? String == usedThread } }
+        // A prepared conversation is used by the next request.
+        await CodexServer.shared.prepare(codexCLI)
+        let prepared = await CodexServer.shared.spareThreadID
+        check(prepared != nil, "conversation prepared")
+        _ = try await codexCLI.generate(messages)
+        check(lastCall("codex", fixture)["threadId"] as? String == prepared, "prepared conversation used")
+        _ = try await LocalCLI(provider: "codex", model: "gpt-fixture", effort: "low", serviceTier: "priority").generate(messages)
+        let fastCall = lastCall("codex", fixture)
+        check((fastCall["turn"] as? [String: Any])?["serviceTierForTurn"] as? String == "priority"
+              && (fastCall["thread"] as? [String: Any])?["serviceTier"] as? String == "priority", "fast tier via server")
+        // If the server cannot start, `codex exec` answers instead.
+        await CodexServer.shared.shutdown()
+        FileManager.default.createFile(atPath: fixture.appendingPathComponent("server-broken").path, contents: nil)
+        check(try await codexCLI.generate(messages) == "动作上的分布。", "falls back to codex exec")
+        check(lastCall("codex", fixture)["mode"] == nil, "exec used after server failure")
+        try FileManager.default.removeItem(at: fixture.appendingPathComponent("server-broken"))
+        await CodexServer.shared.shutdown()
+
+        // The `codex exec` path itself.
+        CodexServer.enabled = false
         check(try await codexCLI.generate(messages) == "动作上的分布。", "codex reply read from -o file")
         let codexArgs = lastCall("codex", fixture)["args"] as? [String] ?? []
         check(codexArgs.contains("gpt-fixture") && codexArgs.contains("model_reasoning_effort=\"low\"")
@@ -86,6 +129,9 @@ enum BackendChecks {
         _ = try await LocalCLI(provider: "codex", model: "gpt-fixture", effort: "low", serviceTier: "priority").generate(messages)
         let fastArgs = lastCall("codex", fixture)["args"] as? [String] ?? []
         check(fastArgs.contains("service_tier=\"priority\""), "fast tier flag \(fastArgs)")
+        do { _ = try await codexCLI.generate(Conversation(source: source).messages(asking: "触发额度")); check(false, "expected quota error") }
+        catch { check(error.localizedDescription.hasPrefix("模型使用额度已用尽"), error.localizedDescription) }
+        CodexServer.enabled = true
         do {
             _ = try await LocalCLI(provider: "claude", model: "", serviceTier: "priority").generate(messages)
             check(false, "claude has no service tier")
@@ -155,6 +201,17 @@ enum BackendChecks {
         check(session.pending == nil && session.draft == "等待取消", "stop restores the draft")
         try await waitUntil(5) { kill(grandchild, 0) != 0 }
 
+        // Stopping a Codex answer interrupts the turn in the app-server.
+        try? FileManager.default.removeItem(at: fixture.appendingPathComponent("started"))
+        UserDefaults.standard.setVolatileDomain(["provider": "codex", "model.codex": "gpt-fixture"], forName: UserDefaults.argumentDomain)
+        let codexSession = Session(source: source)
+        codexSession.submit("等待取消")
+        try await waitUntil { FileManager.default.fileExists(atPath: fixture.appendingPathComponent("started").path) }
+        let waitingThread = lastCall("codex", fixture)["threadId"] as? String ?? ""
+        codexSession.stop()
+        check(codexSession.pending == nil && codexSession.draft == "等待取消", "codex stop restores the draft")
+        try await waitUntil(5) { serverEvents(fixture).contains { $0["interrupt"] as? String == waitingThread } }
+
         UserDefaults.standard.setVolatileDomain(["provider": "codex", "model.codex": "gpt-fixture",
                                                 Preferences.effortKey(provider: "codex", model: "gpt-fixture"): "high"],
                                                forName: UserDefaults.argumentDomain)
@@ -162,7 +219,7 @@ enum BackendChecks {
         try await waitUntil { session.pending == nil }
         check(session.conversation.turns.count == 3 && session.conversation.turns.last?.answer == "继续成功", "switch mid-conversation")
         let switchedCall = lastCall("codex", fixture)
-        check((switchedCall["args"] as? [String] ?? []).contains("model_reasoning_effort=\"high\""), "new effort applied")
+        check((switchedCall["turn"] as? [String: Any])?["effort"] as? String == "high", "new effort applied")
         check((switchedCall["stdin"] as? String ?? "").contains("解释成功"), "history carried across backends")
 
         // Response-time runs: three requests, saved per configuration.
@@ -198,6 +255,13 @@ enum BackendChecks {
                          .paragraph("#话题 不是标题")], "markdown blocks \(blocks)")
         check(MarkdownBlock.parse("```\n未闭合") == [.code("未闭合")], "unclosed fence")
         check(String(MarkdownText.inline("**粗** `x`").characters) == "粗 x", "inline markdown")
+        // An idle server shuts itself down.
+        CodexServer.idleTimeout = 0.5
+        await CodexServer.shared.prepare(LocalCLI(provider: "codex", model: "gpt-fixture"))
+        let wasRunning = await CodexServer.shared.isRunning
+        try await Task.sleep(nanoseconds: 1_500_000_000)
+        let stillRunning = await CodexServer.shared.isRunning
+        check(wasRunning && !stillRunning, "idle server stops (running \(wasRunning) → \(stillRunning))")
         print("All backend checks passed.")
     }
 }

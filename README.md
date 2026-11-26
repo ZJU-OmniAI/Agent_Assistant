@@ -21,7 +21,7 @@
 
 Select a passage in a web page, a PDF or any other app. **翻译 (Translate)** and **提问 (Ask)** buttons appear next to the pointer. Click one and the **Claude Code** or **Codex** CLI signed in on this Mac answers. You can keep asking follow-up questions in the same panel.
 
-- Native AppKit + SwiftUI. The app is about 3 MB and includes builds for both Apple silicon and Intel. While idle it only listens for mouse events, so it uses almost no resources.
+- Native AppKit + SwiftUI. The app is about 3 MB and includes builds for both Apple silicon and Intel. While idle it only listens for mouse events, so it uses almost no resources. With Codex, one Codex background process (about 60–100 MB of memory) stays running while you use it and exits after 15 idle minutes.
 - It calls the command-line tools directly and uses their sign-in and usage limits. No extra service, no API key.
 - Your text goes to the selected model only when you click Translate or send a question. Selecting text alone sends nothing.
 - The interface is currently in Chinese. Translations can go into Simplified or Traditional Chinese, English, Japanese, Korean, French, German or Spanish.
@@ -77,24 +77,26 @@ The menu-bar item **响应时间… (Response times…)** opens the third tab di
 Measured on 2026-11-26. Each combination translated the fixed sentence `The library opens at nine.` into Simplified Chinese three times in a row. Each time runs from sending the request to receiving the full translation and includes CLI startup. Of 154 combinations, 122 succeeded all three times. The other 32 returned no result because the usage limit had run out: the Codex quota was used up at the time, and Fable was not included in the subscription plan used.
 
 - Sonnet 5.5 was the fastest, with a median of 3.3–3.6 s at every effort level. Haiku 5.5 took about 3.8–5.4 s.
-- Most other Claude models took 4–6 s. Most Codex models took 6–9 s.
+- Most other Claude models took 4–6 s. Most Codex models took 6–9 s, measured before Codex moved to a background process (see below).
 - Reasoning effort made little difference for translating a short sentence.
 
-**Codex Fast mode.** Codex offers a faster serving tier for its models. Codex describes it per model, for example "1.5x speed" or "2x speed, increased usage", so some models use more quota with it. It speeds up only the model's output, not the few seconds the CLI takes to start, so longer answers gain the most. Measured on 2026-11-27 with GPT-6.2-Sol, a one-sentence translation went from about 5.9 s to 5.4 s, and a 500-character explanation from about 16.5 s to 12.4 s.
+**Codex Fast mode.** Codex offers a faster serving tier for its models. Codex describes it per model, for example "1.5x speed" or "2x speed, increased usage", so some models use more quota with it. It speeds up only the model's output, not the few seconds the CLI takes to start, so longer answers gain the most. Measured on 2026-11-27 with GPT-6.2-Sol, a one-sentence translation went from about 5.9 s to 5.4 s, and a 500-character explanation from about 16.5 s to 12.4 s (both with `codex exec`).
+
+**Codex background process.** Of the ~5.5 s a one-sentence translation took with `codex exec`, the model itself needed under 2 s. The rest was setup every new process repeats: fetching the model list (~0.8 s), syncing plugins (~0.7 s), opening and warming the connection (~0.9 s) and shutting down (~1 s). Since 2026-11-27 the app keeps one `codex app-server` running and sets up the next conversation while you are still selecting text. Measured with the app's own code: GPT-6.2-Sol went from 5.5 s to 2.1 s, and GPT-6.1 Terra with medium effort and Fast mode from 5.3 s to 1.6 s. The very first request, which also starts the process, takes about 4–5 s.
 
 The raw data is in [`benchmarks/2026-11-26/results.json`](benchmarks/2026-11-26/results.json) and the spreadsheet in [`benchmarks/2026-11-26/响应时间-全部组合.xlsx`](benchmarks/2026-11-26/响应时间-全部组合.xlsx). These runs went through the local bridge of [Paper_Mind](https://github.com/ZJU-OmniAI/Paper_Mind), and the app's Response time tab reads them too. The bridge also starts the CLI once per request, so the times compare directly.
 
 ## How it works
 
-Each request starts the CLI once in a temporary directory, passes the text and conversation on standard input, and deletes the directory afterwards. Clicking **停止 (Stop)** ends the whole process group.
+Each request sends the original text and the recent conversation, and nothing is saved by the CLI. Clicking **停止 (Stop)** ends the request.
 
-- **Claude Code**: `claude -p --output-format json`, with tools, MCP, slash commands and hooks turned off, and no session saved.
-- **Codex**: `codex exec --json --ephemeral`, with a read-only sandbox, the user config ignored, and command execution, web search and multi-agent turned off. With Fast mode on, it adds `-c service_tier="priority"`.
+- **Claude Code**: `claude -p --output-format json`, one process per request in a temporary directory that is deleted afterwards, with tools, MCP, slash commands and hooks turned off, and no session saved.
+- **Codex**: one resident `codex app-server`, started the first time you select text and stopped after 15 idle minutes or when the app quits. It runs with plugins, MCP servers (read from your config and switched off by name), browser and computer use, command execution, web search, multi-agent and shell snapshots turned off. Each request gets its own unsaved conversation in a read-only sandbox, prepared when the 翻译 / 提问 buttons appear and unloaded after the answer. With Fast mode on, the request asks for the `priority` tier. Your Codex config still supplies the default model and reasoning effort (used when the app is set to CLI default), but its `notify` program does not run. If the background process cannot start or the CLI is too old, the app falls back to `codex exec --json --ephemeral` with the same restrictions and the user config ignored.
 - **Finding the CLI**: it searches PATH, `~/.local/bin`, Homebrew, nvm and the Codex CLI bundled with ChatGPT.app. If it finds several copies, it uses the one with the newest `--version` that actually runs, so an old npm install does not hide newer models.
 - **Environment**: an app opened from Finder gets very few environment variables. The assistant reads `PATH` and the proxy settings (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY` and their lowercase forms) from your login shell, and nothing else. A proxy that works in Terminal therefore works here too.
 - **Model list**: read from the CLIs themselves (Claude's `initialize`, Codex's `app-server model/list`). This starts no conversation and uses no quota.
 
-`AGENT_ASSISTANT_CLAUDE_BIN` and `AGENT_ASSISTANT_CODEX_BIN` set the CLI paths explicitly.
+`AGENT_ASSISTANT_CLAUDE_BIN` and `AGENT_ASSISTANT_CODEX_BIN` set the CLI paths explicitly. `AGENT_ASSISTANT_CODEX_SERVER=0` makes Codex always use `codex exec`.
 
 ## Development
 
@@ -104,6 +106,7 @@ Sources/
   Selection.swift       Global mouse monitor, reading the selection via Accessibility, ⌘C fallback
   AssistantView.swift   Chat panel, conversation session, Markdown answers
   Backend.swift         Calling Claude Code / Codex, error classification, model catalog
+  CodexServer.swift     Resident codex app-server: prepared conversations, falls back to codex exec
   Subprocess.swift      Child processes (own process group), login-shell environment, newest-CLI lookup
   Latency.swift         Response-time tests and records
   ResponseTimeView.swift / SettingsView.swift   Settings window

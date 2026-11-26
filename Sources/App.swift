@@ -207,6 +207,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         (strip.contentView?.subviews.first as? NSStackView)?.arrangedSubviews.forEach { ($0 as? ActionButton)?.hovering = false }
         strip.setFrameOrigin(origin(for: strip.frame.size, near: point))
         strip.orderFrontRegardless()
+        prepareBackend()
+    }
+
+    /// Codex answers about 3 s sooner when its conversation is set up while the user is still
+    /// choosing between Translate and Ask.
+    private func prepareBackend() {
+        let backend = Preferences.backend()
+        guard backend.provider == "codex" else { return }
+        Task { await CodexServer.shared.prepare(backend) }
     }
 
     @objc private func translate() { useStrip(translate: true) }
@@ -242,6 +251,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
 
     private func openConversation(_ text: String, at point: NSPoint, translate: Bool) {
+        prepareBackend()
         monitor.dismiss()
         chat?.close()
         let session = Session(source: text)

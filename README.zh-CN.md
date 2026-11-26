@@ -21,7 +21,7 @@
 
 在网页、PDF 和各种应用里选中一段文字，鼠标旁出现「翻译 / 提问」，点一下就由这台 Mac 上已登录的 **Claude Code** 或 **Codex** 回答，还能接着追问。
 
-- 原生 AppKit + SwiftUI，安装包约 3 MB（含 Apple 芯片与 Intel 两份程序），平时只等鼠标事件，几乎不占资源。
+- 原生 AppKit + SwiftUI，安装包约 3 MB（含 Apple 芯片与 Intel 两份程序），平时只等鼠标事件，几乎不占资源。用 Codex 时，使用期间会常驻一个 Codex 后台进程（约 60–100 MB 内存），闲置 15 分钟自动退出。
 - 直接调用本机命令行工具，沿用它们的登录和额度。不需要另开服务，也不需要 API key。
 - 只有点了「翻译」或发出问题时，原文才会交给所选模型。只是选中文字时什么都不发。
 - 界面目前是中文。译文语言可选简体中文、繁體中文、English、日本語、한국어、Français、Deutsch、Español。
@@ -77,24 +77,26 @@
 2026-11-26 实测。固定把 `The library opens at nine.` 译成简体中文，每个组合连续请求 3 次，从发出请求计时到收到完整译文，包含命令行工具的启动时间。154 个组合中，122 个三次全部成功，32 个因额度用尽没取得结果（当时 Codex 额度用完，Fable 不在所用的订阅套餐里）。
 
 - 最快的是 Sonnet 5.5，各档中位数 3.3–3.6 秒；Haiku 5.5 约 3.8–5.4 秒。
-- Claude 的其他模型大多在 4–6 秒，Codex 各模型大多在 6–9 秒。
+- Claude 的其他模型大多在 4–6 秒，Codex 各模型大多在 6–9 秒（这是 Codex 改用后台进程之前测的，见下文）。
 - 推理强度对这种短句翻译影响很小。
 
-**Codex 快速模式**：Codex 的模型提供一个更快的档位。每个模型的说明不同，例如"1.5 倍速度"或"2 倍速度，额度消耗更多"，有的模型开了会多耗额度。它只加快模型输出，命令行工具启动的那几秒不变，所以回答越长越明显。2026-11-27 用 GPT-6.2-Sol 实测：一句话的翻译从约 5.9 秒变成 5.4 秒，约 500 字的解释从约 16.5 秒变成 12.4 秒。
+**Codex 快速模式**：Codex 的模型提供一个更快的档位。每个模型的说明不同，例如"1.5 倍速度"或"2 倍速度，额度消耗更多"，有的模型开了会多耗额度。它只加快模型输出，命令行工具启动的那几秒不变，所以回答越长越明显。2026-11-27 用 GPT-6.2-Sol 实测：一句话的翻译从约 5.9 秒变成 5.4 秒，约 500 字的解释从约 16.5 秒变成 12.4 秒（都是用 `codex exec` 测的）。
+
+**Codex 后台进程**：用 `codex exec` 翻译一句话约 5.5 秒，其中模型真正作答不到 2 秒，其余都是每次新开进程都要重复的准备：重新拉取模型列表（约 0.8 秒）、同步插件（约 0.7 秒）、建立并预热连接（约 0.9 秒）、退出（约 1 秒）。2026-11-27 起，App 常驻一个 `codex app-server`，并在你选中文字时就把下一次对话准备好。用 App 自己的代码实测：GPT-6.2-Sol 从 5.5 秒降到 2.1 秒，GPT-6.1 Terra（medium + 快速模式）从 5.3 秒降到 1.6 秒。第一次请求要顺带启动后台进程，约 4–5 秒。
 
 原始数据在 [`benchmarks/2026-11-26/results.json`](benchmarks/2026-11-26/results.json)，表格在 [`benchmarks/2026-11-26/响应时间-全部组合.xlsx`](benchmarks/2026-11-26/响应时间-全部组合.xlsx)。这批数据是通过 [Paper_Mind](https://github.com/ZJU-OmniAI/Paper_Mind) 的本机桥接测的，也会被 App 的响应时间页读入。桥接同样是每次请求启动一次命令行工具，所以耗时可以直接比较。
 
 ## 工作方式
 
-每次请求都在临时目录里启动一次命令行工具，原文和对话从标准输入传入，结束后删除临时目录。点「停止」会结束整组进程。
+每次请求都带上原文和最近的对话，命令行工具不保存任何会话。点「停止」会结束这次请求。
 
-- **Claude Code**：`claude -p --output-format json`，关闭工具、MCP、斜杠命令和 hooks，不保存会话。
-- **Codex**：`codex exec --json --ephemeral`，只读沙箱，忽略用户配置，关闭命令执行、网页搜索和多智能体。打开快速模式时加上 `-c service_tier="priority"`。
+- **Claude Code**：`claude -p --output-format json`，每次请求在临时目录里启动一个进程，结束后删除；关闭工具、MCP、斜杠命令和 hooks，不保存会话。
+- **Codex**：常驻一个 `codex app-server`，第一次划词时启动，闲置 15 分钟或退出 App 时结束。启动时关闭插件、MCP 服务（从你的配置里读出名字逐个关掉）、浏览器和电脑操控、命令执行、网页搜索、多智能体和 shell 快照。每次请求用一个不保存的新对话，只读沙箱；对话在出现「翻译 / 提问」时就准备好，回答完立即卸载。打开快速模式时请求 `priority` 档位。选「CLI 默认」时沿用你 Codex 配置里的默认模型和推理强度，但不会运行配置里的 `notify` 程序。后台进程启动失败或命令行工具版本太旧时，自动改用 `codex exec --json --ephemeral`，限制相同，并忽略用户配置。
 - **找命令行工具**：搜索 PATH、`~/.local/bin`、Homebrew、nvm，以及 ChatGPT.app 自带的 Codex。找到多份时用 `--version` 最新且能运行的一份，旧的 npm 版本不会挡住新模型。
 - **环境**：从 Finder 打开的 App 只有很少的环境变量。助手会从登录 shell 读取 `PATH` 和代理设置（`HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY` 及小写形式），其他变量不读，所以终端里能用的代理这里也能用。
 - **模型列表**：从命令行工具自己读取（Claude 的 `initialize`，Codex 的 `app-server model/list`），不产生对话，也不消耗额度。
 
-可以用 `AGENT_ASSISTANT_CLAUDE_BIN`、`AGENT_ASSISTANT_CODEX_BIN` 指定命令行工具路径。
+可以用 `AGENT_ASSISTANT_CLAUDE_BIN`、`AGENT_ASSISTANT_CODEX_BIN` 指定命令行工具路径。设置 `AGENT_ASSISTANT_CODEX_SERVER=0` 可以让 Codex 始终用 `codex exec`。
 
 ## 开发
 
@@ -104,6 +106,7 @@ Sources/
   Selection.swift       全局鼠标监听、辅助功能取词、⌘C 兜底
   AssistantView.swift   对话浮窗、会话、回答的 Markdown 排版
   Backend.swift         调用 Claude Code / Codex、错误归类、模型目录
+  CodexServer.swift     常驻 codex app-server：提前准备对话，出问题时改用 codex exec
   Subprocess.swift      子进程（独立进程组）、登录 shell 环境、找最新版命令行工具
   Latency.swift         响应时间测试与记录
   ResponseTimeView.swift / SettingsView.swift   设置窗口

@@ -13,5 +13,5 @@ done
 printf '#!/bin/sh\necho "codex-cli 0.100.0"\nexit 0\n' >"$work/old/codex"
 chmod +x "$work/old/codex"
 ./swiftc.sh -swift-version 5 -parse-as-library Sources/Backend.swift Sources/Subprocess.swift \
-    Sources/AssistantView.swift Sources/Latency.swift Tests/BackendChecks.swift -o "$work/checks"
+    Sources/AssistantView.swift Sources/Latency.swift Sources/CodexServer.swift Tests/BackendChecks.swift -o "$work/checks"
 FIXTURE_DIR="$work/fixture" AGENT_ASSISTANT_SKIP_SHELL=1 PATH="$work/old:$work/new:$PATH" "$work/checks"
